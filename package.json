@@ -1,0 +1,79 @@
+{
+  "name": "@variant/mcp-server",
+  "version": "0.1.0",
+  "description": "Shared MCP HTTP server, auth, and widget infrastructure for Variant plugin projects.",
+  "packageManager": "pnpm@11.18.0+sha512.33d83c77da82f49fba836925c6f1b841181ec3132b670639bd012f7075f5c7cf634c5f870147c19aae7478fac01df09d8892e880454896edd23ee9b33757563c",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "bin": {
+    "variant-build-widgets": "./dist/buildWidgets.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js"
+    },
+    "./build-widgets": {
+      "types": "./dist/buildWidgets.d.ts",
+      "import": "./dist/buildWidgets.js"
+    },
+    "./widget": {
+      "types": "./dist/widget.d.ts",
+      "import": "./dist/widget.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "check-exports": "attw --pack . --profile esm-only",
+    "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build && pnpm check-exports",
+    "prepack": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.3",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@sveltejs/vite-plugin-svelte": "^7.0.0",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.2.0",
+    "jose": "^6.2.3",
+    "openid-client": "^6.8.4",
+    "svelte": "^5.56.1",
+    "vite": "^8.0.16",
+    "vite-plugin-singlefile": "^2.3.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@biomejs/biome": "^2.5.6",
+    "@types/express": "^5.0.6",
+    "@types/node": "25.9.1",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.2.2",
+    "typescript": "6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

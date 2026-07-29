@@ -1,7 +1,22 @@
-import { resolve } from 'node:path';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { createMcpExpressApp, type McpServerConfig } from './index.js';
+
+// 1x1 transparent PNG, generated on the fly so tests don't depend on a
+// committed binary fixture: consumers supply their own icon.png at runtime.
+const FIXTURE_ICON_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+function createFixtureAssetsDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'mcp-server-test-assets-'));
+  writeFileSync(join(dir, 'icon.png'), FIXTURE_ICON_PNG);
+  return dir;
+}
 
 function testConfig(): McpServerConfig {
   return {
@@ -36,7 +51,7 @@ function testConfig(): McpServerConfig {
       version: '0.0.0',
       websiteUrl: undefined,
     },
-    assetsDir: resolve('plugins/standard/mcp-server/assets'),
+    assetsDir: createFixtureAssetsDir(),
   };
 }
 

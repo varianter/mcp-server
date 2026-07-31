@@ -3,7 +3,7 @@
 Shared MCP HTTP server infrastructure for plugin projects.
 
 Intended to use with Claude plugin projects with colocated MCP and Skills, but can also be used to build standalone MCP servers for other purposes.
-See [plugin template](https://github.com/varianter/plugin-template) for usage examples.
+See [marketplace plugin template](https://github.com/varianter/plugin-marketplace-template) for usage examples.
 
 It provides:
 

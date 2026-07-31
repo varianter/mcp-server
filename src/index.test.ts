@@ -30,8 +30,7 @@ function testConfig(): McpServerConfig {
       rateLimitPerMinute: 60,
       trustProxy: false,
       auth: {
-        enabled: false,
-        provider: 'entra',
+        provider: 'none',
         issuerUrl: '',
         clientId: '',
         clientSecret: '',

@@ -1,11 +1,21 @@
 // Config holds runtime configuration loaded from environment variables plus optional
-// committed plugin.config.json defaults. Environment variables always win.
-// Prefer the AUTH_* names for OAuth. AZURE_* names are kept as backwards-compatible
-// aliases for existing Entra deployments.
+// committed mcp-server.config.json defaults. Environment variables always win.
+//
+// There is no separate auth on/off flag: AUTH_PROVIDER defaults to "none" (auth disabled) and
+// selecting any real provider is what turns auth on — see validateConfig. Setting
+// AUTH_ISSUER_URL/AUTH_CLIENT_ID without picking a provider is rejected rather than guessed.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, parse } from 'node:path';
-import type { AuthProviderKind } from '../auth/adapters.js';
+import { z } from 'zod';
+import { AUTH_PROVIDER_KINDS } from '../auth/adapters.js';
+
+/** `none` means auth is disabled; every other value is a real, verifiable provider. */
+export const AUTH_PROVIDER_SELECTION_VALUES = ['none', ...AUTH_PROVIDER_KINDS] as const;
+export type AuthProviderSelection = (typeof AUTH_PROVIDER_SELECTION_VALUES)[number];
+
+export const CLIENT_REGISTRATION_VALUES = ['none', 'provider', 'static'] as const;
+export type ClientRegistration = (typeof CLIENT_REGISTRATION_VALUES)[number];
 
 export interface Config {
   host: string;
@@ -17,8 +27,8 @@ export interface Config {
   rateLimitPerMinute: number;
   trustProxy: string | number | boolean;
   auth: {
-    enabled: boolean;
-    provider: AuthProviderKind;
+    /** `none` (the default) means auth is disabled; any other value turns it on. */
+    provider: AuthProviderSelection;
     issuerUrl: string;
     clientId: string;
     clientSecret: string;
@@ -32,7 +42,7 @@ export interface Config {
     scopeAliases: string[];
     compatibilityProxy: boolean;
     /** `static` exposes local /register returning AUTH_CLIENT_ID for Claude/MCP clients. */
-    clientRegistration: 'none' | 'provider' | 'static';
+    clientRegistration: ClientRegistration;
   };
 }
 
@@ -40,60 +50,62 @@ export type ConfigOverrides = Partial<Omit<Config, 'auth'>> & {
   auth?: Partial<Config['auth']>;
 };
 
-interface PluginConfigFile {
-  mcpPath?: string;
-  auth?: {
-    enabled?: boolean;
-    provider?: string;
-    tenantId?: string;
-    issuerUrl?: string;
-    clientId?: string;
-    audience?: string;
-    acceptedAudiences?: string[];
-    acceptedIssuers?: string[];
-    scopes?: string[];
-    scopeAliases?: string[];
-    compatibilityProxy?: boolean;
-    clientRegistration?: 'none' | 'provider' | 'static';
-    allowedRedirectOrigins?: string[];
-  };
-  limits?: {
-    maxSessions?: number;
-    rateLimitPerMinute?: number;
-  };
-}
+const MCP_SERVER_CONFIG_FILE_AUTH_SCHEMA = z
+  .object({
+    provider: z.enum(AUTH_PROVIDER_SELECTION_VALUES),
+    tenantId: z.string(),
+    issuerUrl: z.string(),
+    clientId: z.string(),
+    audience: z.string(),
+    acceptedAudiences: z.array(z.string()),
+    acceptedIssuers: z.array(z.string()),
+    scopes: z.array(z.string()),
+    scopeAliases: z.array(z.string()),
+    compatibilityProxy: z.boolean(),
+    clientRegistration: z.enum(CLIENT_REGISTRATION_VALUES),
+    allowedRedirectOrigins: z.array(z.string()),
+  })
+  .partial()
+  .strict();
+
+/** Schema for `mcp-server.config.json` / `mcp-server.config.local.json`. Also published as
+ *  `mcp-server.config.schema.json` (see scripts/generate-config-schema.mjs) for editor
+ *  autocomplete via a `$schema` reference in the config file. */
+export const McpServerConfigFileSchema = z
+  .object({
+    $schema: z.string(),
+    mcpPath: z.string(),
+    auth: MCP_SERVER_CONFIG_FILE_AUTH_SCHEMA,
+    limits: z
+      .object({
+        maxSessions: z.number().int().positive(),
+        rateLimitPerMinute: z.number().int().positive(),
+      })
+      .partial()
+      .strict(),
+  })
+  .partial()
+  .strict();
+
+export type McpServerConfigFile = z.infer<typeof McpServerConfigFileSchema>;
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
-  const fileConfig = loadPluginConfigFile();
+  const fileConfig = loadMcpServerConfigFile();
 
   const host = process.env.HOST ?? '0.0.0.0';
   const port = parsePort(process.env.PORT);
   const mcpPath = parseMcpPath(process.env.MCP_PATH ?? fileConfig.mcpPath ?? '/mcp');
 
-  const provider = parseProvider(
-    process.env.AUTH_PROVIDER ?? process.env.OAUTH_PROVIDER ?? fileConfig.auth?.provider ?? 'entra',
-  );
-  const clientId =
-    process.env.AUTH_CLIENT_ID ??
-    process.env.OAUTH_CLIENT_ID ??
-    process.env.AZURE_CLIENT_ID ??
-    fileConfig.auth?.clientId ??
-    '';
-  const tenantId =
-    process.env.AUTH_TENANT_ID ?? process.env.AZURE_TENANT_ID ?? fileConfig.auth?.tenantId;
+  const provider = parseProvider(process.env.AUTH_PROVIDER ?? fileConfig.auth?.provider ?? 'none');
+  const clientId = process.env.AUTH_CLIENT_ID ?? fileConfig.auth?.clientId ?? '';
+  const tenantId = process.env.AUTH_TENANT_ID ?? fileConfig.auth?.tenantId;
   const issuerUrl =
     process.env.AUTH_ISSUER_URL ??
-    process.env.OAUTH_ISSUER_URL ??
     fileConfig.auth?.issuerUrl ??
     (tenantId ? `https://login.microsoftonline.com/${tenantId}/v2.0` : '');
-  const clientSecret =
-    process.env.AUTH_CLIENT_SECRET ??
-    process.env.OAUTH_CLIENT_SECRET ??
-    process.env.AZURE_CLIENT_SECRET ??
-    '';
+  const clientSecret = process.env.AUTH_CLIENT_SECRET ?? '';
   const scopes = parseScopes(
     process.env.AUTH_SCOPES ??
-      process.env.OAUTH_SCOPES ??
       fileConfig.auth?.scopes?.join(' ') ??
       defaultScopes(clientId, provider),
   );
@@ -107,13 +119,6 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     provider,
     fileConfig.auth?.compatibilityProxy,
   );
-  const authEnabled = parseAuthEnabled(
-    process.env.AUTH_ENABLED,
-    issuerUrl,
-    clientId,
-    fileConfig.auth?.enabled,
-  );
-
   const defaultPublicHost = host === '0.0.0.0' ? 'localhost' : host;
 
   const allowedRedirectOrigins = parseCsvOrArray(
@@ -130,10 +135,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     port,
     mcpPath,
     publicUrl: parseUrl(
-      process.env.PUBLIC_URL ??
-        process.env.AUTH_PUBLIC_URL ??
-        process.env.AZURE_PUBLIC_URL ??
-        `http://${defaultPublicHost}:${port}`,
+      process.env.PUBLIC_URL ?? `http://${defaultPublicHost}:${port}`,
       'PUBLIC_URL',
     ),
     allowedRedirectOrigins,
@@ -149,13 +151,11 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ),
     trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
     auth: {
-      enabled: authEnabled,
       provider,
       issuerUrl,
       clientId,
       clientSecret,
-      audience:
-        process.env.AUTH_AUDIENCE ?? process.env.OAUTH_AUDIENCE ?? fileConfig.auth?.audience ?? '',
+      audience: process.env.AUTH_AUDIENCE ?? fileConfig.auth?.audience ?? '',
       acceptedAudiences: parseCsvOrArray(
         process.env.AUTH_ACCEPTED_AUDIENCES,
         fileConfig.auth?.acceptedAudiences,
@@ -176,31 +176,28 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   };
 
   const merged = { ...config, ...overrides, auth: { ...config.auth, ...overrides.auth } };
-  if (overrides.auth?.enabled === undefined && !merged.auth.enabled && hasAuthCredentials(merged)) {
-    merged.auth.enabled = true;
-  }
   validateConfig(merged);
   return merged;
 }
 
-function loadPluginConfigFile(): PluginConfigFile {
-  const configDir = findConfigDir();
+function loadMcpServerConfigFile(): McpServerConfigFile {
+  const configDir = findMcpServerConfigDir();
   if (!configDir) return {};
 
-  const base = readPluginConfigFile(join(configDir, 'plugin.config.json'));
-  const local = readPluginConfigFile(join(configDir, 'plugin.config.local.json'));
-  return mergePluginConfig(base, local);
+  const base = readMcpServerConfigFile(join(configDir, 'mcp-server.config.json'));
+  const local = readMcpServerConfigFile(join(configDir, 'mcp-server.config.local.json'));
+  return mergeMcpServerConfigFiles(base, local);
 }
 
-function findConfigDir(): string | undefined {
+function findMcpServerConfigDir(): string | undefined {
   const starts = [...new Set([process.env.INIT_CWD, process.cwd()].filter(Boolean) as string[])];
   for (const start of starts) {
     let dir = start;
     const root = parse(dir).root;
     while (true) {
       if (
-        existsSync(join(dir, 'plugin.config.json')) ||
-        existsSync(join(dir, 'plugin.config.local.json'))
+        existsSync(join(dir, 'mcp-server.config.json')) ||
+        existsSync(join(dir, 'mcp-server.config.local.json'))
       ) {
         return dir;
       }
@@ -211,16 +208,27 @@ function findConfigDir(): string | undefined {
   return undefined;
 }
 
-function readPluginConfigFile(path: string): PluginConfigFile {
+function readMcpServerConfigFile(path: string): McpServerConfigFile {
   if (!existsSync(path)) return {};
+
+  let raw: unknown;
   try {
-    return JSON.parse(readFileSync(path, 'utf8')) as PluginConfigFile;
+    raw = JSON.parse(readFileSync(path, 'utf8'));
   } catch (err) {
     throw new Error(`invalid ${path}: ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  const result = McpServerConfigFileSchema.safeParse(raw);
+  if (!result.success) {
+    throw new Error(`invalid ${path}:\n${z.prettifyError(result.error)}`);
+  }
+  return result.data;
 }
 
-function mergePluginConfig(base: PluginConfigFile, local: PluginConfigFile): PluginConfigFile {
+function mergeMcpServerConfigFiles(
+  base: McpServerConfigFile,
+  local: McpServerConfigFile,
+): McpServerConfigFile {
   return {
     ...base,
     ...local,
@@ -271,49 +279,33 @@ function parseTrustProxy(raw: string | undefined): string | number | boolean {
   return raw;
 }
 
-function parseProvider(raw: string): AuthProviderKind {
+function parseProvider(raw: string): AuthProviderSelection {
   const normalized = raw === 'generic' ? 'generic-oidc' : raw;
-  if (
-    normalized === 'generic-oidc' ||
-    normalized === 'oidc' ||
-    normalized === 'entra' ||
-    normalized === 'auth0' ||
-    normalized === 'okta' ||
-    normalized === 'keycloak' ||
-    normalized === 'cognito' ||
-    normalized === 'zitadel'
-  )
-    return normalized;
+  if (isOneOf(normalized, AUTH_PROVIDER_SELECTION_VALUES)) return normalized;
   throw new Error(
-    `invalid AUTH_PROVIDER "${raw}": expected generic-oidc, oidc, entra, auth0, okta, keycloak, cognito, or zitadel`,
+    `invalid AUTH_PROVIDER "${raw}": expected ${AUTH_PROVIDER_SELECTION_VALUES.join(', ')}`,
   );
 }
 
 function parseClientRegistration(
   raw: string | undefined,
   compatibilityProxy: boolean,
-  defaultValue: 'none' | 'provider' | 'static' | undefined,
-): 'none' | 'provider' | 'static' {
+  defaultValue: ClientRegistration | undefined,
+): ClientRegistration {
   if (!raw) return defaultValue ?? (compatibilityProxy ? 'static' : 'provider');
-  if (raw === 'none' || raw === 'provider' || raw === 'static') return raw;
-  throw new Error(`invalid AUTH_CLIENT_REGISTRATION "${raw}": expected none, provider, or static`);
+  if (isOneOf(raw, CLIENT_REGISTRATION_VALUES)) return raw;
+  throw new Error(
+    `invalid AUTH_CLIENT_REGISTRATION "${raw}": expected ${CLIENT_REGISTRATION_VALUES.join(', ')}`,
+  );
 }
 
-function parseAuthEnabled(
-  raw: string | undefined,
-  issuerUrl: string,
-  clientId: string,
-  defaultValue: boolean | undefined,
-): boolean {
-  if (!raw) return defaultValue ?? !!(issuerUrl && clientId);
-  if (raw === 'true' || raw === '1') return true;
-  if (raw === 'false' || raw === '0') return false;
-  throw new Error(`invalid AUTH_ENABLED "${raw}": expected true or false`);
+function isOneOf<const T extends readonly string[]>(value: string, values: T): value is T[number] {
+  return (values as readonly string[]).includes(value);
 }
 
 function parseAuthCompatibilityProxy(
   raw: string | undefined,
-  provider: AuthProviderKind,
+  provider: AuthProviderSelection,
   defaultValue: boolean | undefined,
 ): boolean {
   if (!raw) return defaultValue ?? provider === 'entra';
@@ -334,7 +326,7 @@ function parseCsvOrArray(raw: string | undefined, defaultValue: string[] = []): 
     .filter(Boolean);
 }
 
-function defaultScopes(clientId: string, provider: AuthProviderKind): string {
+function defaultScopes(clientId: string, provider: AuthProviderSelection): string {
   if (provider === 'entra' && clientId) return `openid ${clientId}/.default offline_access`;
   return 'openid profile email offline_access';
 }
@@ -344,20 +336,22 @@ function hasAuthCredentials(config: Config): boolean {
 }
 
 function validateConfig(config: Config): void {
-  if (!config.auth.enabled) {
+  if (config.auth.provider === 'none') {
     if (hasAuthCredentials(config)) {
       throw new Error(
-        'auth is disabled but auth credentials are configured; set AUTH_ENABLED=true or remove AUTH_ISSUER_URL/AUTH_CLIENT_ID',
+        'AUTH_ISSUER_URL/AUTH_CLIENT_ID are set but AUTH_PROVIDER is "none" (the default); set AUTH_PROVIDER to enable auth',
       );
     }
     return;
   }
 
   const missing: string[] = [];
-  if (!config.auth.issuerUrl) missing.push('AUTH_ISSUER_URL (or AUTH_TENANT_ID/AZURE_TENANT_ID)');
-  if (!config.auth.clientId) missing.push('AUTH_CLIENT_ID (or AZURE_CLIENT_ID)');
+  if (!config.auth.issuerUrl) missing.push('AUTH_ISSUER_URL (or AUTH_TENANT_ID for entra)');
+  if (!config.auth.clientId) missing.push('AUTH_CLIENT_ID');
   if (missing.length > 0) {
-    throw new Error(`auth is enabled but required config is missing: ${missing.join(', ')}`);
+    throw new Error(
+      `AUTH_PROVIDER is "${config.auth.provider}" but required config is missing: ${missing.join(', ')}`,
+    );
   }
   parseUrl(config.auth.issuerUrl, 'AUTH_ISSUER_URL');
   if (config.auth.scopes.length === 0) {

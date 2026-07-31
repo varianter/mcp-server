@@ -1,14 +1,18 @@
 import type { JWTPayload } from 'jose';
 
-export type AuthProviderKind =
-  | 'generic-oidc'
-  | 'oidc'
-  | 'entra'
-  | 'auth0'
-  | 'okta'
-  | 'keycloak'
-  | 'cognito'
-  | 'zitadel';
+/** Real, verifiable identity providers. See ../config/config.ts for the `none` (disabled) case. */
+export const AUTH_PROVIDER_KINDS = [
+  'generic-oidc',
+  'oidc',
+  'entra',
+  'auth0',
+  'okta',
+  'keycloak',
+  'cognito',
+  'zitadel',
+] as const;
+
+export type AuthProviderKind = (typeof AUTH_PROVIDER_KINDS)[number];
 
 export interface ProviderAdapterConfig {
   clientId: string;

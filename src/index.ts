@@ -18,8 +18,8 @@ export {
 } from '@modelcontextprotocol/ext-apps/server';
 export type { RequestContext } from './auth/context.js';
 export { getRequestContext } from './auth/context.js';
-export type { Config, ConfigOverrides } from './config/config.js';
-export { loadConfig } from './config/config.js';
+export type { Config, ConfigOverrides, McpServerConfigFile } from './config/config.js';
+export { loadConfig, McpServerConfigFileSchema } from './config/config.js';
 export type { ServerMetadata } from './config/metadata.js';
 export { loadServerMetadata } from './config/metadata.js';
 export { log } from './log.js';
@@ -108,23 +108,24 @@ export async function createMcpExpressApp(
   options: McpExpressAppOptions = {},
 ): Promise<express.Express> {
   const { runtime: cfg, metadata, assetsDir: resolvedAssetsDir } = config;
-  const provider = cfg.auth.enabled
-    ? await OAuthProvider.create({
-        issuerUrl: cfg.auth.issuerUrl,
-        clientId: cfg.auth.clientId,
-        clientSecret: cfg.auth.clientSecret || undefined,
-        audience: cfg.auth.audience || undefined,
-        acceptedAudiences: cfg.auth.acceptedAudiences,
-        acceptedIssuers: cfg.auth.acceptedIssuers,
-        scopes: cfg.auth.scopes,
-        scopeAliases: cfg.auth.scopeAliases,
-        publicUrl: cfg.publicUrl,
-        mcpPath: cfg.mcpPath,
-        providerKind: cfg.auth.provider,
-        compatibilityProxy: cfg.auth.compatibilityProxy,
-        clientRegistration: cfg.auth.clientRegistration,
-      })
-    : undefined;
+  const provider =
+    cfg.auth.provider !== 'none'
+      ? await OAuthProvider.create({
+          issuerUrl: cfg.auth.issuerUrl,
+          clientId: cfg.auth.clientId,
+          clientSecret: cfg.auth.clientSecret || undefined,
+          audience: cfg.auth.audience || undefined,
+          acceptedAudiences: cfg.auth.acceptedAudiences,
+          acceptedIssuers: cfg.auth.acceptedIssuers,
+          scopes: cfg.auth.scopes,
+          scopeAliases: cfg.auth.scopeAliases,
+          publicUrl: cfg.publicUrl,
+          mcpPath: cfg.mcpPath,
+          providerKind: cfg.auth.provider,
+          compatibilityProxy: cfg.auth.compatibilityProxy,
+          clientRegistration: cfg.auth.clientRegistration,
+        })
+      : undefined;
 
   if (!provider) log('warn', 'auth disabled');
 
@@ -193,7 +194,7 @@ async function startConfiguredMcpServer(
         addr: `${cfg.host}:${cfg.port}`,
         publicUrl: cfg.publicUrl,
         mcp: cfg.mcpPath,
-        auth: cfg.auth.enabled ? cfg.auth.provider : 'disabled',
+        auth: cfg.auth.provider,
       });
       resolve(server);
     });

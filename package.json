@@ -11,7 +11,8 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "mcp-server.config.schema.json"
   ],
   "bin": {
     "variant-build-widgets": "./dist/buildWidgets.js"
@@ -33,10 +34,12 @@
       "types": "./dist/widget.d.ts",
       "import": "./dist/widget.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./mcp-server.config.schema.json": "./mcp-server.config.schema.json"
   },
   "scripts": {
     "build": "tsc",
+    "postbuild": "node scripts/generate-config-schema.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

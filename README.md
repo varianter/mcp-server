@@ -1,5 +1,7 @@
 # @variant/mcp-server
 
+https://img.shields.io/npm/v/%40variant%2Fmcp-server
+
 Shared MCP HTTP server infrastructure for plugin projects.
 
 Intended to use with Claude plugin projects with colocated MCP and Skills, but can also be used to build standalone MCP servers for other purposes.

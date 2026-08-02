@@ -1,6 +1,6 @@
 # @variant/mcp-server
 
-https://img.shields.io/npm/v/%40variant%2Fmcp-server
+![NPM Version](https://img.shields.io/npm/v/%40variant%2Fmcp-server)
 
 Shared MCP HTTP server infrastructure for plugin projects.
 
